@@ -62,7 +62,10 @@ import { GATEWAY_EVENTS } from "./server-methods-list.js";
 import { loadGatewayModelCatalog } from "./server-model-catalog.js";
 import { bootstrapGatewayNetworkRuntime } from "./server-network-runtime.js";
 import { createGatewayNodeSessionRuntime } from "./server-node-session-runtime.js";
-import { setFallbackGatewayContextResolver } from "./server-plugins.js";
+import {
+  clearFallbackGatewayContext,
+  setFallbackGatewayContextResolver,
+} from "./server-plugins.js";
 import { startManagedGatewayConfigReloader } from "./server-reload-handlers.js";
 import { createGatewayRequestContext } from "./server-request-context.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
@@ -718,8 +721,12 @@ export async function startGatewayServer(
       httpServers,
     });
   const closeOnStartupFailure = async () => {
-    await runClosePrelude();
-    await createCloseHandler()({ reason: "gateway startup failed" });
+    try {
+      await runClosePrelude();
+      await createCloseHandler()({ reason: "gateway startup failed" });
+    } finally {
+      clearFallbackGatewayContext();
+    }
   };
   const broadcastVoiceWakeRoutingChanged = (config: VoiceWakeRoutingConfig) => {
     broadcast("voicewake.routing.changed", { config }, { dropIfSlow: true });
@@ -1029,14 +1036,18 @@ export async function startGatewayServer(
 
   return {
     close: async (opts) => {
-      // Run gateway_stop plugin hook before shutdown
-      await runGlobalGatewayStopSafely({
-        event: { reason: opts?.reason ?? "gateway stopping" },
-        ctx: { port },
-        onError: (err) => log.warn(`gateway_stop hook failed: ${String(err)}`),
-      });
-      await runClosePrelude();
-      await close(opts);
+      try {
+        // Run gateway_stop plugin hook before shutdown
+        await runGlobalGatewayStopSafely({
+          event: { reason: opts?.reason ?? "gateway stopping" },
+          ctx: { port },
+          onError: (err) => log.warn(`gateway_stop hook failed: ${String(err)}`),
+        });
+        await runClosePrelude();
+        await close(opts);
+      } finally {
+        clearFallbackGatewayContext();
+      }
     },
   };
 }
